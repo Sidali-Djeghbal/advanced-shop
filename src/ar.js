@@ -3,12 +3,14 @@ import * as THREE from "three";
 export function createARMode({
   renderer,
   scene,
+  camera,
   getCurrent,
   setActive,
   setBackdrop,
 }) {
   let session = null;
   let refSpace = null;
+  let refType = "local-floor";
   let anchor = null;
   let savedBg = null;
   let baseHeight = 2.1;
@@ -18,6 +20,7 @@ export function createARMode({
   let activeInput = null;
   let activePointerId = null;
   let dragStarted = false;
+  let viewerPose = null;
 
   const reticle = new THREE.Mesh(
     new THREE.RingGeometry(0.13, 0.16, 40),
@@ -33,10 +36,15 @@ export function createARMode({
 
   const _q = new THREE.Quaternion();
   const _v = new THREE.Vector3();
-  const _p = new THREE.Vector3();
   const _d = new THREE.Vector3();
   const _ray = new THREE.Raycaster();
   const _ndc = new THREE.Vector2();
+  const _fwd = new THREE.Vector3(0, 0, -1);
+
+  // "local" spaces have their origin at head height, so guess the floor.
+  function floorY() {
+    return refType === "local-floor" ? 0 : -1.45;
+  }
 
   function rayPlaneY(origin, dir, y) {
     if (Math.abs(dir.y) < 1e-5) return null;
@@ -46,16 +54,19 @@ export function createARMode({
   }
 
   function cameraTarget() {
-    const cam = renderer.xr.getCamera();
-    cam.getWorldPosition(_p);
-    cam.getWorldDirection(_d);
+    if (!viewerPose) return null;
+    const t = viewerPose.transform;
+    _q.set(t.orientation.x, t.orientation.y, t.orientation.z, t.orientation.w);
+    _d.set(0, 0, -1).applyQuaternion(_q);
     _d.y = 0;
-    if (_d.lengthSq() < 1e-6) {
-      cam.getWorldDirection(_d);
-      _d.y = 0;
+    if (_d.lengthSq() > 1e-6) {
+      _d.normalize();
+      _fwd.copy(_d);
+    } else {
+      _d.copy(_fwd); // looking straight up/down: keep last heading
     }
-    _d.normalize();
-    return new THREE.Vector3(_p.x + _d.x * 2, 0, _p.z + _d.z * 2);
+    const p = t.position;
+    return new THREE.Vector3(p.x + _d.x * 2, floorY(), p.z + _d.z * 2);
   }
 
   function pointerTarget(clientX, clientY) {
@@ -66,7 +77,7 @@ export function createARMode({
       -(((clientY - rect.top) / rect.height) * 2 - 1),
     );
     _ray.setFromCamera(_ndc, renderer.xr.getCamera());
-    return rayPlaneY(_ray.ray.origin, _ray.ray.direction, 0) || cameraTarget();
+    return rayPlaneY(_ray.ray.origin, _ray.ray.direction, floorY());
   }
 
   function inputTarget(input, frame) {
@@ -77,16 +88,20 @@ export function createARMode({
     const q = pose.transform.orientation;
     _q.set(q.x, q.y, q.z, q.w);
     _v.set(0, 0, -1).applyQuaternion(_q);
-    return rayPlaneY(new THREE.Vector3(o.x, o.y, o.z), _v, 0);
+    return rayPlaneY(
+      new THREE.Vector3(o.x, o.y, o.z),
+      _v,
+      floorY(),
+    );
   }
 
   function faceViewer() {
-    if (!anchor || !renderer.xr.getCamera) return;
-    const cam = renderer.xr.getCamera();
-    const v = new THREE.Vector3();
-    cam.getWorldPosition(v);
-    const yaw = Math.atan2(v.x - anchor.position.x, v.z - anchor.position.z);
-    anchor.rotation.y = yaw;
+    if (!anchor || !viewerPose) return;
+    const v = viewerPose.transform.position;
+    anchor.rotation.y = Math.atan2(
+      v.x - anchor.position.x,
+      v.z - anchor.position.z,
+    );
   }
 
   function placeAt(pos) {
@@ -107,7 +122,7 @@ export function createARMode({
   ui.innerHTML = `
     <div class="ar-top">
       <button class="ar-exit" type="button">Exit AR</button>
-      <span class="ar-tip">Preview in front of you &middot; drag to anchor</span>
+      <span class="ar-tip">Follows your camera &middot; touch &amp; drag to place</span>
     </div>
     <div class="ar-bottom">
       <div class="ar-slider">
@@ -139,13 +154,13 @@ export function createARMode({
 
   function beginDrag(clientX, clientY) {
     if (!session || !anchor) return;
+    setFollow(false); // user takes control; don't snap back on release
     const target = pointerTarget(clientX, clientY);
     if (target) {
       placeAt(target);
       if (autoFitOn) autoFit();
     }
     dragStarted = true;
-    setFollow(false);
   }
 
   function moveDrag(clientX, clientY) {
@@ -170,12 +185,18 @@ export function createARMode({
   }
 
   function autoFit() {
-    if (!anchor || !renderer.xr.getCamera) return;
-    const cam = renderer.xr.getCamera();
-    const v = new THREE.Vector3();
-    cam.getWorldPosition(v);
-    const d = Math.max(v.distanceTo(anchor.position), 0.25);
-    const e = cam.projectionMatrix.elements;
+    if (!anchor || !viewerPose || !viewerPose.views || !viewerPose.views.length)
+      return;
+    const v = viewerPose.transform.position;
+    const d = Math.max(
+      Math.hypot(
+        v.x - anchor.position.x,
+        v.y - anchor.position.y,
+        v.z - anchor.position.z,
+      ),
+      0.25,
+    );
+    const e = viewerPose.views[0].projectionMatrix;
     const tanVHalf = 1 / Math.max(Math.abs(e[5]), 1e-6);
     const targetH = 2 * d * tanVHalf * 0.55;
     setScale(targetH / baseHeight);
@@ -213,17 +234,25 @@ export function createARMode({
     if (scene.background === null) scene.background = savedBg;
     if (typeof setBackdrop === "function") setBackdrop(true);
     if (typeof setActive === "function") setActive(false);
+    if (camera) {
+      camera.position.set(0, 1.75, 3.7);
+      camera.lookAt(0, 1.12, 0);
+    }
     activeInput = null;
     activePointerId = null;
     dragStarted = false;
-    s = 1;
-    autoFitOn = true;
-    followCamera = true;
+    viewerPose = null;
     refSpace = null;
+    setScale(1);
+    autoFitOn = true;
+    refitBtn.textContent = "Auto-fit: On";
+    refitBtn.classList.remove("off");
+    setFollow(true);
   }
 
   function onSelectStart(e) {
     activeInput = e.inputSource;
+    setFollow(false); // user takes control; don't snap back on release
   }
   function onSelectEnd(e) {
     if (activeInput === e.inputSource) activeInput = null;
@@ -276,10 +305,10 @@ export function createARMode({
       showUnsupported("Product is not ready yet.");
       return;
     }
-    const initial = cameraTarget();
-    anchor.position.set(initial.x, initial.y, initial.z);
+    anchor.position.set(0, 0, -2);
     anchor.rotation.set(0, 0, 0);
     anchor.scale.setScalar(1);
+    setScale(1);
 
     const box = new THREE.Box3().setFromObject(anchor);
     const size = box.getSize(new THREE.Vector3());
@@ -305,13 +334,19 @@ export function createARMode({
 
     try {
       renderer.xr.enabled = true;
-      renderer.xr.setReferenceSpaceType("local-floor");
       session = await navigator.xr.requestSession("immersive-ar", {
         optionalFeatures: ["dom-overlay"],
         domOverlay: { root: ui },
       });
+      try {
+        refType = "local-floor";
+        refSpace = await session.requestReferenceSpace(refType);
+      } catch {
+        refType = "local";
+        refSpace = await session.requestReferenceSpace(refType);
+      }
+      renderer.xr.setReferenceSpaceType(refType);
       await renderer.xr.setSession(session);
-      refSpace = await session.requestReferenceSpace("local-floor");
       session.addEventListener("selectstart", onSelectStart);
       session.addEventListener("selectend", onSelectEnd);
       session.addEventListener("end", onEnd);
@@ -345,6 +380,8 @@ export function createARMode({
   function update(frame) {
     try {
       if (!session || !frame || !refSpace || !anchor) return;
+      viewerPose = frame.getViewerPose(refSpace);
+      if (!viewerPose) return;
 
       if (activeInput) {
         const t = inputTarget(activeInput, frame);
@@ -355,18 +392,17 @@ export function createARMode({
       }
 
       const target =
-        followCamera && !dragStarted ? cameraTarget() : anchor.position;
+        followCamera && !activeInput && !dragStarted ? cameraTarget() : null;
       if (target) {
-        reticle.visible = true;
-        reticle.position.set(target.x, target.y + 0.002, target.z);
-      } else {
-        reticle.visible = false;
-      }
-
-      if (followCamera && !activeInput && !dragStarted && target) {
         placeAt(target);
         if (autoFitOn) autoFit();
       }
+      reticle.visible = true;
+      reticle.position.set(
+        anchor.position.x,
+        anchor.position.y + 0.002,
+        anchor.position.z,
+      );
     } catch (err) {
       // never let an input hiccup kill the render loop
     }

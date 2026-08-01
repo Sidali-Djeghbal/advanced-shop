@@ -11,6 +11,7 @@ let xrActive = false
 const ar = createARMode({
   renderer,
   scene,
+  camera,
   getCurrent: () => current,
   setActive: (v) => { xrActive = v },
   setBackdrop,
@@ -31,6 +32,7 @@ let vel = 0
 const drag = { active: false, x: 0 }
 
 stage.addEventListener('pointerdown', (e) => {
+  if (xrActive) return
   drag.active = true
   drag.x = e.clientX
   vel = 0
