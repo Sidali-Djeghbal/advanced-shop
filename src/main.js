@@ -162,7 +162,11 @@ function animate(time, frame) {
   const dt = Math.min(clock.getDelta(), 0.05)
 
   if (xrActive) {
-    ar.update(frame)
+    try {
+      ar.update(frame)
+    } catch (e) {
+      /* keep the loop alive */
+    }
   } else {
     for (let i = anims.length - 1; i >= 0; i--) {
       const a = anims[i]

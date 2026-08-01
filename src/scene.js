@@ -4,7 +4,6 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 export function createScene(container) {
   const renderer = new THREE.WebGLRenderer({
     antialias: false,
-    powerPreference: "low-power",
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
   renderer.setSize(container.clientWidth, container.clientHeight);

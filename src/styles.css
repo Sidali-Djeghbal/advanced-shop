@@ -228,23 +228,27 @@ html, body {
   position: absolute;
   left: 0;
   right: 0;
+  top: 0;
   bottom: 0;
-  padding: 20px 20px calc(18px + env(safe-area-inset-bottom));
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
   z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 16px 16px calc(14px + env(safe-area-inset-bottom));
   pointer-events: none;
 }
 .ar-ui button { pointer-events: auto; }
+.ar-top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
 .ar-exit {
   border: 1px solid rgba(255, 255, 255, 0.4);
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.35);
   color: #fff;
   border-radius: 999px;
-  padding: 11px 18px;
+  padding: 10px 16px;
   font-family: inherit;
   font-size: 10px;
   font-weight: 600;
@@ -257,9 +261,46 @@ html, body {
   margin: 0;
   color: #fff;
   font-size: 10px;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+}
+.ar-bottom {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.55));
+  padding: 16px 6px 6px;
+}
+.ar-size {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: #fff;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+.ar-size input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+  pointer-events: auto;
+}
+.ar-refit {
+  flex: none;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  border-radius: 999px;
+  padding: 11px 16px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
   white-space: nowrap;
 }
 .ar-msg {

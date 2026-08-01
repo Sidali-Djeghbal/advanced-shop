@@ -8,6 +8,9 @@ export function createARMode({ renderer, scene, getCurrent, setActive, setBackdr
   let anchor = null;
   let placed = false;
   let savedBg = null;
+  let baseHeight = 2.1;
+  let s = 1;
+  let autoFitOn = true;
 
   const reticle = new THREE.Mesh(
     new THREE.RingGeometry(0.13, 0.16, 40),
@@ -24,17 +27,33 @@ export function createARMode({ renderer, scene, getCurrent, setActive, setBackdr
   const ui = document.createElement("div");
   ui.className = "ar-ui";
   ui.innerHTML = `
-    <button class="ar-exit" type="button">Exit AR</button>
-    <p class="ar-tip">Aim at the floor &middot; tap to place &middot; drag to move</p>
+    <div class="ar-top">
+      <button class="ar-exit" type="button">Exit AR</button>
+      <span class="ar-tip">Aim at the floor &middot; tap to place &middot; drag to move</span>
+    </div>
+    <div class="ar-bottom">
+      <label class="ar-size">Size<input class="ar-scale" type="range" min="40" max="250" value="100"></label>
+      <button class="ar-refit" type="button">Auto-fit: On</button>
+    </div>
   `;
+  const scaleEl = ui.querySelector(".ar-scale");
+  const refitBtn = ui.querySelector(".ar-refit");
 
-  function showUnsupported() {
+  scaleEl.addEventListener("input", () => setScale(Number(scaleEl.value) / 100));
+  refitBtn.addEventListener("click", () => {
+    autoFitOn = !autoFitOn;
+    refitBtn.textContent = autoFitOn ? "Auto-fit: On" : "Auto-fit: Off";
+    if (autoFitOn) autoFit();
+  });
+  ui.querySelector(".ar-exit").addEventListener("click", close);
+
+  function showUnsupported(msg) {
     const m = document.createElement("div");
     m.className = "ar-msg";
     m.innerHTML = `
       <div class="ar-msg-box">
         <h3>AR not available</h3>
-        <p>This device or browser does not support WebXR AR. Use an AR-capable phone (Chrome on Android, or Safari 17+ on iOS) over HTTPS.</p>
+        <p>${msg}</p>
         <button type="button">Close</button>
       </div>
     `;
@@ -57,6 +76,8 @@ export function createARMode({ renderer, scene, getCurrent, setActive, setBackdr
     if (typeof setBackdrop === "function") setBackdrop(true);
     if (typeof setActive === "function") setActive(false);
     placed = false;
+    s = 1;
+    autoFitOn = true;
     hitSource = null;
     transientSource = null;
     refSpace = null;
@@ -64,27 +85,33 @@ export function createARMode({ renderer, scene, getCurrent, setActive, setBackdr
 
   async function open() {
     if (session) return;
+    let supported = false;
     try {
-      if (
-        !navigator.xr ||
-        !(await navigator.xr.isSessionSupported("immersive-ar"))
-      ) {
-        showUnsupported();
-        return;
+      if (navigator.xr) {
+        supported = await navigator.xr.isSessionSupported("immersive-ar");
       }
     } catch {
-      showUnsupported();
+      supported = false;
+    }
+    if (!supported) {
+      showUnsupported(
+        "This device or browser does not support WebXR AR. Use an AR-capable phone (Chrome on Android, or Safari 17+ on iOS) over HTTPS.",
+      );
       return;
     }
 
     anchor = getCurrent();
     if (!anchor) {
-      showUnsupported();
+      showUnsupported("Product is not ready yet.");
       return;
     }
     anchor.position.set(0, 0, 0);
     anchor.rotation.set(0, 0, 0);
     anchor.scale.setScalar(1);
+
+    const box = new THREE.Box3().setFromObject(anchor);
+    const size = box.getSize(new THREE.Vector3());
+    if (size.y > 1e-3) baseHeight = size.y;
 
     savedBg = scene.background;
     scene.background = null;
@@ -122,8 +149,15 @@ export function createARMode({ renderer, scene, getCurrent, setActive, setBackdr
       session.addEventListener("end", onEnd);
       if (typeof setActive === "function") setActive(true);
     } catch (err) {
+      const s = session;
+      session = null;
+      if (s) {
+        try {
+          s.end();
+        } catch {}
+      }
       cleanup();
-      showUnsupported();
+      showUnsupported("The AR session could not be started. Camera permission may be required.");
     }
   }
 
@@ -153,52 +187,79 @@ export function createARMode({ renderer, scene, getCurrent, setActive, setBackdr
     anchor.rotation.y = yaw;
   }
 
+  function setScale(v) {
+    s = Math.min(3, Math.max(0.35, v));
+    scaleEl.value = String(Math.round(s * 100));
+    if (anchor) anchor.scale.setScalar(s);
+  }
+
+  function autoFit() {
+    if (!anchor || !renderer.xr.getCamera) return;
+    const cam = renderer.xr.getCamera();
+    const v = new THREE.Vector3();
+    cam.getWorldPosition(v);
+    const d = Math.max(v.distanceTo(anchor.position), 0.25);
+    const e = cam.projectionMatrix.elements;
+    const tanVHalf = 1 / Math.max(Math.abs(e[5]), 1e-6);
+    const targetH = 2 * d * tanVHalf * 0.55;
+    setScale(targetH / baseHeight);
+  }
+
   function applyPose(pose) {
     const p = pose.transform.position;
     anchor.position.set(p.x, p.y, p.z);
+    anchor.rotation.set(0, 0, 0);
+    anchor.scale.setScalar(s);
     faceViewer();
   }
 
   function update(frame) {
-    if (!session || !frame || !refSpace || !hitSource) return;
+    try {
+      if (!session || !frame || !refSpace || !hitSource) return;
 
-    let touched = false;
-    if (transientSource) {
-      const trs = frame.getHitTestResultsForTransientInput(transientSource);
-      if (trs.length) {
-        const results = trs[0].results;
-        if (results.length) {
-          const pose = results[0].getPose(refSpace);
-          if (pose && isFloor(pose)) {
-            applyPose(pose);
-            placed = true;
-            touched = true;
+      let touched = false;
+      if (transientSource) {
+        const trs = frame.getHitTestResultsForTransientInput(transientSource);
+        if (trs.length) {
+          const results = trs[0].results;
+          if (results.length) {
+            const pose = results[0].getPose(refSpace);
+            if (pose && isFloor(pose)) {
+              applyPose(pose);
+              placed = true;
+              touched = true;
+              if (autoFitOn) autoFit();
+            }
           }
         }
       }
-    }
 
-    const hits = frame.getHitTestResults(hitSource);
-    let reticlePose = null;
-    if (hits.length) {
-      const pose = hits[0].getPose(refSpace);
-      if (pose && isFloor(pose)) reticlePose = pose;
-    }
-
-    if (reticlePose) {
-      reticle.visible = true;
-      reticle.position.set(
-        reticlePose.position.x,
-        reticlePose.position.y + 0.002,
-        reticlePose.position.z,
-      );
-      if (!placed && !touched) {
-        const p = reticlePose.transform.position;
-        anchor.position.set(p.x, p.y, p.z);
-        anchor.rotation.set(0, 0, 0);
+      const hits = frame.getHitTestResults(hitSource);
+      let reticlePose = null;
+      if (hits.length) {
+        const pose = hits[0].getPose(refSpace);
+        if (pose && isFloor(pose)) reticlePose = pose;
       }
-    } else {
-      reticle.visible = false;
+
+      if (reticlePose) {
+        reticle.visible = true;
+        reticle.position.set(
+          reticlePose.position.x,
+          reticlePose.position.y + 0.002,
+          reticlePose.position.z,
+        );
+        if (!placed && !touched) {
+          const p = reticlePose.transform.position;
+          anchor.position.set(p.x, p.y, p.z);
+          anchor.rotation.set(0, 0, 0);
+          anchor.scale.setScalar(s);
+          if (autoFitOn) autoFit();
+        }
+      } else {
+        reticle.visible = false;
+      }
+    } catch (err) {
+      // never let a hit-test hiccup kill the render loop
     }
   }
 
