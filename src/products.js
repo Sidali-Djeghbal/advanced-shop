@@ -307,6 +307,11 @@ function buildPlasmaDoor() {
     metalness: 0.06,
     alphaTest: 0.5,
   });
+  const backMat = new THREE.MeshStandardMaterial({
+    color: 0xf3efe5,
+    roughness: 0.6,
+    metalness: 0.06,
+  });
   const goldMat = new THREE.MeshStandardMaterial({
     color: 0xa0874a,
     metalness: 1,
@@ -350,18 +355,24 @@ function buildPlasmaDoor() {
       core.receiveShadow = true;
       g.add(core);
 
-      // laser-cut white faces with the gold mirror backing recessed behind
-      for (const sign of [1, -1]) {
+      // front: laser-cut white steel with the gold mirror backing recessed behind
+      {
         const gold = new THREE.Mesh(new THREE.PlaneGeometry(W, H), goldMat);
-        gold.position.set(0, H / 2, sign * (coreDepth / 2 + 0.0015));
-        if (sign < 0) gold.rotation.y = Math.PI;
+        gold.position.set(0, H / 2, coreDepth / 2 + 0.0015);
         g.add(gold);
 
         const face = new THREE.Mesh(new THREE.PlaneGeometry(W, H), faceMat);
-        face.position.set(0, H / 2, sign * (coreDepth / 2 + 0.005));
-        if (sign < 0) face.rotation.y = Math.PI;
+        face.position.set(0, H / 2, coreDepth / 2 + 0.005);
         face.castShadow = true;
         g.add(face);
+      }
+      // back: plain white interior face, no ornament — only the handle shows
+      {
+        const back = new THREE.Mesh(new THREE.PlaneGeometry(W, H), backMat);
+        back.position.set(0, H / 2, -(coreDepth / 2 + 0.005));
+        back.rotation.y = Math.PI;
+        back.castShadow = true;
+        g.add(back);
       }
 
       // white perimeter frame, like the real door set
@@ -399,28 +410,30 @@ function buildPlasmaDoor() {
         g.add(hinge);
       }
 
-      // slim brushed-steel pull handle
-      const handle = new THREE.Group();
-      const grip = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.01, 0.01, 0.66, 20),
-        chromeMat,
-      );
-      grip.position.set(0, 0, 0.05);
-      handle.add(grip);
-      for (const my of [-0.27, 0.27]) {
-        const mount = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.006, 0.006, 0.05, 12),
+      // brushed-steel pull handle on both faces (the back is the inside face)
+      for (const zSide of [1, -1]) {
+        const handle = new THREE.Group();
+        const grip = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.01, 0.01, 0.66, 20),
           chromeMat,
         );
-        mount.rotation.x = Math.PI / 2;
-        mount.position.set(0, my, 0.025);
-        handle.add(mount);
+        grip.position.set(0, 0, 0.05 * zSide);
+        handle.add(grip);
+        for (const my of [-0.27, 0.27]) {
+          const mount = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.006, 0.006, 0.05, 12),
+            chromeMat,
+          );
+          mount.rotation.x = Math.PI / 2;
+          mount.position.set(0, my, 0.025 * zSide);
+          handle.add(mount);
+        }
+        handle.position.set(-0.305, 0.99, (coreDepth / 2 + 0.005) * zSide);
+        handle.traverse((o) => {
+          o.castShadow = true;
+        });
+        g.add(handle);
       }
-      handle.position.set(-0.305, 0.99, coreDepth / 2 + 0.005);
-      handle.traverse((o) => {
-        o.castShadow = true;
-      });
-      g.add(handle);
 
       // brass lock cylinders
       for (const ky of [1.41, 0.6]) {
