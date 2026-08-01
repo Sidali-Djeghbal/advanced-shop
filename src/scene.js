@@ -3,11 +3,13 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
 export function createScene(container) {
   const renderer = new THREE.WebGLRenderer({
-    antialias: false,
+    antialias: true,
+    preserveDrawingBuffer: true,
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
   renderer.setSize(container.clientWidth, container.clientHeight);
-  renderer.shadowMap.enabled = false;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.1;
   container.appendChild(renderer.domElement);
@@ -32,11 +34,11 @@ export function createScene(container) {
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
   key.shadow.camera.near = 0.5;
-  key.shadow.camera.far = 12;
-  key.shadow.camera.left = -3;
-  key.shadow.camera.right = 3;
-  key.shadow.camera.top = 3;
-  key.shadow.camera.bottom = -3;
+  key.shadow.camera.far = 25;
+  key.shadow.camera.left = -5;
+  key.shadow.camera.right = 5;
+  key.shadow.camera.top = 5;
+  key.shadow.camera.bottom = -5;
   key.shadow.bias = -0.0004;
   key.shadow.radius = 5;
   scene.add(key);
@@ -90,5 +92,5 @@ export function createScene(container) {
     for (const o of backdrop) o.visible = visible;
   }
 
-  return { renderer, scene, camera, setBackdrop };
+  return { renderer, scene, camera, setBackdrop, key };
 }

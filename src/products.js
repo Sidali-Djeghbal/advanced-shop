@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import doorImage from "../img/door.png";
+import doorFaceImage from "../img/door-face.webp";
 
 const frameMat = new THREE.MeshStandardMaterial({
   color: 0x232327,
@@ -92,197 +92,28 @@ function bar(g, w, h, d, mat, x, y, z, rx = 0, ry = 0, rz = 0) {
   return m;
 }
 
-function addExtrudedShape(
-  g,
-  shape,
-  depth,
-  mat,
-  x,
-  y,
-  z,
-  ry = 0,
-  sx = 1,
-  sy = 1,
-) {
-  const geometry = new THREE.ExtrudeGeometry(shape, {
-    depth,
-    bevelEnabled: true,
-    bevelSegments: 1,
-    steps: 1,
-    bevelSize: 0.006,
-    bevelThickness: 0.006,
-    curveSegments: 18,
-  });
-  geometry.center();
-  const mesh = new THREE.Mesh(geometry, mat);
-  mesh.position.set(x, y, z);
-  mesh.rotation.y = ry;
-  mesh.scale.set(sx, sy, 1);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  g.add(mesh);
-  return mesh;
-}
-
-function rectShape(w, h) {
-  const s = new THREE.Shape();
-  s.moveTo(-w / 2, -h / 2);
-  s.lineTo(w / 2, -h / 2);
-  s.lineTo(w / 2, h / 2);
-  s.lineTo(-w / 2, h / 2);
-  s.closePath();
-  return s;
-}
-
-function diamondHole(cx, cy, w, h) {
-  const s = new THREE.Shape();
-  s.moveTo(cx, cy + h / 2);
-  s.lineTo(cx + w / 2, cy);
-  s.lineTo(cx, cy - h / 2);
-  s.lineTo(cx - w / 2, cy);
-  s.closePath();
-  return s;
-}
-
-function perforatedPanelShape(w, h, cellW, cellH, holeW, holeH, inset = 0.1) {
-  const shape = rectShape(w, h);
-  const cols = Math.floor((w - inset * 2) / cellW);
-  const rows = Math.floor((h - inset * 2) / cellH);
-  const startX = -((cols - 1) * cellW) / 2;
-  const startY = -((rows - 1) * cellH) / 2;
-
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
-      const offset = row % 2 === 0 ? 0 : cellW / 2;
-      const x = startX + col * cellW + offset;
-      const y = startY + row * cellH;
-      if (Math.abs(x) > w / 2 - inset || Math.abs(y) > h / 2 - inset) continue;
-      shape.holes.push(diamondHole(x, y, holeW, holeH));
-    }
-  }
-  return shape;
-}
-
-function arcBandShape(innerRadius, outerRadius, startAngle, endAngle) {
-  const shape = new THREE.Shape();
-  shape.absarc(0, 0, outerRadius, startAngle, endAngle, false);
-  shape.absarc(0, 0, innerRadius, endAngle, startAngle, true);
-  shape.closePath();
-  return shape;
-}
-
-function leafShape() {
-  const s = new THREE.Shape();
-  s.moveTo(0, 0);
-  s.bezierCurveTo(0.16, 0.1, 0.22, 0.34, 0.03, 0.62);
-  s.bezierCurveTo(-0.08, 0.34, -0.06, 0.1, 0, 0);
-  s.closePath();
-  return s;
-}
-
-function makeCanvasTexture(canvas) {
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
-  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  return tex;
-}
-
+// Door face texture is precomputed offline (img/door-face.webp):
+// already cropped to the alpha bbox, with the gold ornament laser-cut
+// out of the alpha channel and edges feathered for clean mipmaps.
 function loadDoorFace(url) {
   return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const src = document.createElement("canvas");
-      src.width = img.width;
-      src.height = img.height;
-      const sctx = src.getContext("2d", { willReadFrequently: true });
-      sctx.drawImage(img, 0, 0);
-      const px = sctx.getImageData(0, 0, img.width, img.height).data;
-
-      let minX = img.width,
-        minY = img.height,
-        maxX = -1,
-        maxY = -1;
-      for (let y = 0; y < img.height; y++) {
-        const row = y * img.width;
-        for (let x = 0; x < img.width; x++) {
-          if (px[(row + x) * 4 + 3] > 16) {
-            if (x < minX) minX = x;
-            if (x > maxX) maxX = x;
-            if (y < minY) minY = y;
-            if (y > maxY) maxY = y;
-          }
-        }
-      }
-      if (maxX < 0) {
-        minX = 0;
-        minY = 0;
-        maxX = img.width - 1;
-        maxY = img.height - 1;
-      }
-
-      const w = maxX - minX + 1;
-      const h = maxY - minY + 1;
-
-      // laser-cut face: keep every opaque pixel except the gold ornament,
-      // which becomes a real cut-out (the gold backing shows through)
-      const crop = sctx.getImageData(minX, minY, w, h);
-      const sp = crop.data;
-      const face = document.createElement("canvas");
-      face.width = w;
-      face.height = h;
-      const fctx = face.getContext("2d");
-      const fimg = fctx.createImageData(w, h);
-      const dp = fimg.data;
-      for (let i = 0; i < sp.length; i += 4) {
-        const r = sp[i],
-          g = sp[i + 1],
-          b = sp[i + 2],
-          a = sp[i + 3];
-        if (a < 160) continue; // discard the semi-transparent rim
-        const mx = Math.max(r, g, b),
-          mn = Math.min(r, g, b);
-        const sat = mx > 0 ? (mx - mn) / mx : 0;
-        if (sat > 0.28 && r > 110 && r > b + 40 && g > b + 20) continue; // cut
-        dp[i] = r;
-        dp[i + 1] = g;
-        dp[i + 2] = b;
-        dp[i + 3] = 255;
-      }
-      fctx.putImageData(fimg, 0, 0);
-
-      resolve({ faceTex: makeCanvasTexture(face), aspect: w / h });
-    };
-    img.onerror = () => reject(new Error(`Failed to load ${url}`));
-    img.src = url;
+    new THREE.TextureLoader().load(
+      url,
+      (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = 8;
+        tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.minFilter = THREE.LinearMipmapLinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.generateMipmaps = true;
+        tex.needsUpdate = true;
+        const img = tex.image;
+        resolve({ faceTex: tex, aspect: img.width / img.height });
+      },
+      undefined,
+      reject,
+    );
   });
-}
-
-function makeContactShadow() {
-  const c = document.createElement("canvas");
-  c.width = 128;
-  c.height = 128;
-  const ctx = c.getContext("2d");
-  const grad = ctx.createRadialGradient(64, 64, 6, 64, 64, 61);
-  grad.addColorStop(0, "rgba(0,0,0,0.5)");
-  grad.addColorStop(0.55, "rgba(0,0,0,0.2)");
-  grad.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 128, 128);
-  const tex = new THREE.CanvasTexture(c);
-  const m = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.6, 0.9),
-    new THREE.MeshBasicMaterial({
-      map: tex,
-      transparent: true,
-      depthWrite: false,
-    }),
-  );
-  m.rotation.x = -Math.PI / 2;
-  m.position.y = 0.005;
-  return m;
 }
 
 function buildPlasmaDoor() {
@@ -336,10 +167,7 @@ function buildPlasmaDoor() {
     envMapIntensity: 1.3,
   });
 
-  // soft contact shadow — grounds the door so it stops looking pasted on
-  g.add(makeContactShadow());
-
-  loadDoorFace(doorImage)
+  loadDoorFace(doorFaceImage)
     .then(({ faceTex, aspect }) => {
       const W = H * aspect;
       faceMat.map = faceTex;
@@ -455,162 +283,6 @@ function buildPlasmaDoor() {
   return g;
 }
 
-function strokeGeometryToShapes(bufferGeometry) {
-  // Extract boundary edge loops from indexed geometry and return shapes
-  const pos = bufferGeometry.attributes.position.array;
-  const idx = bufferGeometry.index ? bufferGeometry.index.array : null;
-  const vertices = [];
-  for (let i = 0; i < pos.length; i += 3)
-    vertices.push(new THREE.Vector2(pos[i], pos[i + 1]));
-
-  const edgeCount = new Map();
-  const pushEdge = (a, b) => {
-    const key = a < b ? `${a}_${b}` : `${b}_${a}`;
-    edgeCount.set(key, (edgeCount.get(key) || 0) + 1);
-  };
-
-  if (idx) {
-    for (let i = 0; i < idx.length; i += 3) {
-      const a = idx[i],
-        b = idx[i + 1],
-        c = idx[i + 2];
-      pushEdge(a, b);
-      pushEdge(b, c);
-      pushEdge(c, a);
-    }
-  } else {
-    for (let i = 0; i < vertices.length; i += 3) {
-      const a = i,
-        b = i + 1,
-        c = i + 2;
-      pushEdge(a, b);
-      pushEdge(b, c);
-      pushEdge(c, a);
-    }
-  }
-
-  const boundaryEdges = [];
-  for (const key of edgeCount.keys())
-    if (edgeCount.get(key) === 1) boundaryEdges.push(key);
-
-  const adjacency = new Map();
-  for (const key of boundaryEdges) {
-    const [sa, sb] = key.split("_").map((s) => parseInt(s, 10));
-    if (!adjacency.has(sa)) adjacency.set(sa, []);
-    if (!adjacency.has(sb)) adjacency.set(sb, []);
-    adjacency.get(sa).push(sb);
-    adjacency.get(sb).push(sa);
-  }
-
-  const loops = [];
-  const visited = new Set();
-  for (const start of adjacency.keys()) {
-    if (visited.has(start)) continue;
-    const loop = [start];
-    visited.add(start);
-    let cur = start;
-    let prev = null;
-    while (true) {
-      const nexts = adjacency.get(cur) || [];
-      let next = null;
-      for (const n of nexts)
-        if (n !== prev) {
-          next = n;
-          break;
-        }
-      if (next === null) break;
-      if (next === start) break;
-      loop.push(next);
-      visited.add(next);
-      prev = cur;
-      cur = next;
-    }
-    if (loop.length > 2) loops.push(loop);
-  }
-
-  const shapes = [];
-  for (const loop of loops) {
-    const s = new THREE.Shape();
-    const p0 = vertices[loop[0]];
-    s.moveTo(p0.x, p0.y);
-    for (let i = 1; i < loop.length; i++) {
-      const p = vertices[loop[i]];
-      s.lineTo(p.x, p.y);
-    }
-    s.closePath();
-    shapes.push(s);
-  }
-  return shapes;
-}
-
-function addSvgExtrudedPanel(g, svgUrl) {
-  const loader = new SVGLoader();
-  const data = loader.parse(svgUrl);
-  const scale = 0.0017;
-  const centerX = 0.5 * 850 * scale;
-  const centerY = 0.5 * 1100 * scale;
-  const steelMat = new THREE.MeshStandardMaterial({
-    color: 0xe2e0da,
-    metalness: 0.94,
-    roughness: 0.22,
-  });
-
-  const panelGroup = new THREE.Group();
-
-  // base thin panel
-  const panelThickness = 0.06;
-  const base = new THREE.Mesh(
-    new THREE.BoxGeometry(850 * scale, 1100 * scale, panelThickness),
-    new THREE.MeshStandardMaterial({
-      color: 0x141416,
-      metalness: 0.18,
-      roughness: 0.9,
-    }),
-  );
-  base.position.set(0, (1100 * scale) / 2, -panelThickness / 2);
-  panelGroup.add(base);
-
-  for (const path of data.paths) {
-    const style = { ...path.userData.style };
-
-    // if filled shapes exist, extrude them
-    const shapes = SVGLoader.createShapes(path);
-    if (shapes && shapes.length) {
-      for (const s of shapes) {
-        const depth = 0.06;
-        const mesh = addExtrudedShape(panelGroup, s, depth, steelMat, 0, 0, 0);
-        mesh.geometry.scale(scale, -scale, 1);
-        mesh.geometry.translate(-centerX, centerY, 0);
-        mesh.position.z = 0.02;
-      }
-    }
-
-    // handle strokes by generating a stroked polygon and extruding it
-    for (const subPath of path.subPaths) {
-      const points = subPath.getPoints(6);
-      if (points.length < 2) continue;
-      const strokeWidth = Math.max(
-        (parseFloat(style.strokeWidth) || 0.35) * 9,
-        1.2,
-      );
-      style.strokeWidth = String(strokeWidth);
-      const strokedGeom = SVGLoader.pointsToStroke(points, style, 6, 0.001);
-      if (!strokedGeom) continue;
-      strokedGeom.scale(scale, -scale, scale);
-      strokedGeom.translate(-centerX, centerY, 0);
-      const strokedShapes = strokeGeometryToShapes(strokedGeom);
-      for (const s of strokedShapes) {
-        const depth = 0.06;
-        addExtrudedShape(panelGroup, s, depth, steelMat, 0, 0, 0);
-      }
-    }
-  }
-
-  panelGroup.scale.setScalar(1.08);
-  g.add(panelGroup);
-  return panelGroup;
-}
-
 function glassPanel(g, w, h, x, y, z, opts = {}) {
   const th = opts.th ?? 0.05;
   const depth = opts.depth ?? 0.05;
@@ -623,45 +295,6 @@ function glassPanel(g, w, h, x, y, z, opts = {}) {
   bar(g, th, h - th * 2, depth, frame, x - hw + th / 2, y, z);
   bar(g, th, h - th * 2, depth, frame, x + hw - th / 2, y, z);
   bar(g, w - th * 2, h - th * 2, depth - 0.03, glass, x, y, z);
-  return g;
-}
-
-export function buildImage(imageUrl, opts = {}) {
-  const g = group();
-  const backerMat = new THREE.MeshStandardMaterial({
-    color: opts.backer ?? 0x1c1c20,
-    metalness: 0.8,
-    roughness: 0.35,
-  });
-  const backer = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), backerMat);
-  const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1));
-  backer.position.z = -0.014;
-  backer.castShadow = true;
-  backer.receiveShadow = true;
-  plane.castShadow = true;
-  g.add(backer, plane);
-
-  const tex = new THREE.TextureLoader().load(imageUrl, () => {
-    const img = tex.image;
-    if (!img) return;
-    const aspect = img.width / img.height;
-    const w = opts.width ?? 1.2;
-    const h = w / aspect;
-    plane.geometry.dispose();
-    plane.geometry = new THREE.PlaneGeometry(w, h);
-    backer.geometry.dispose();
-    backer.geometry = new THREE.PlaneGeometry(w + 0.08, h + 0.08);
-    plane.position.y = h / 2;
-    backer.position.y = h / 2;
-  });
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
-  plane.material = new THREE.MeshStandardMaterial({
-    map: tex,
-    color: opts.color ?? 0xffffff,
-    roughness: opts.roughness ?? 0.4,
-    metalness: opts.metalness ?? 0.55,
-  });
   return g;
 }
 

@@ -243,7 +243,8 @@ html, body {
   align-items: center;
   gap: 14px;
 }
-.ar-exit {
+.ar-exit,
+.ar-shot {
   border: 1px solid rgba(255, 255, 255, 0.4);
   background: rgba(0, 0, 0, 0.35);
   color: #fff;
@@ -256,6 +257,10 @@ html, body {
   text-transform: uppercase;
   cursor: pointer;
   backdrop-filter: blur(8px);
+}
+.ar-shot {
+  background: rgba(224, 96, 58, 0.85);
+  border-color: rgba(255, 255, 255, 0.5);
 }
 .ar-tip {
   margin: 0;
@@ -305,7 +310,8 @@ html, body {
   gap: 10px;
 }
 .ar-refit,
-.ar-follow {
+.ar-follow,
+.ar-reset {
   flex: 1;
   border: 1px solid rgba(255, 255, 255, 0.4);
   background: rgba(255, 255, 255, 0.14);

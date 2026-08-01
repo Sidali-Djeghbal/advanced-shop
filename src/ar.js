@@ -1,9 +1,11 @@
 import * as THREE from "three";
+import { XREstimatedLight } from "three/addons/webxr/XREstimatedLight.js";
 
 export function createARMode({
   renderer,
   scene,
   camera,
+  key,
   getCurrent,
   setActive,
   setBackdrop,
@@ -15,11 +17,20 @@ export function createARMode({
   let transientHitSource = null;
   let anchor = null;
   let savedBg = null;
+  let savedEnv = null;
+  let savedKeyI = null;
+  let xrLight = null;
+  let arKey = null;
+  let shadowFloor = null;
   let baseHeight = 2.1;
   let s = 1;
   let autoFitOn = true;
   let followCamera = true;
   let activeInput = null;
+  const activeInputs = new Map(); // inputSource -> Vector3 floor pos (touch)
+  let pinching = false;
+  let pinchStartDist = 0;
+  let pinchStartScale = 1;
   let activePointerId = null;
   let dragStarted = false;
   let viewerPose = null;
@@ -168,6 +179,7 @@ export function createARMode({
   ui.innerHTML = `
     <div class="ar-top">
       <button class="ar-exit" type="button">Exit AR</button>
+      <button class="ar-shot" type="button">Capture</button>
       <span class="ar-tip">Point at the floor &middot; touch &amp; drag to place</span>
     </div>
     <div class="ar-bottom">
@@ -176,6 +188,7 @@ export function createARMode({
         <input class="ar-scale" type="range" min="40" max="250" value="100">
       </div>
       <div class="ar-toggles">
+        <button class="ar-reset" type="button">Reset</button>
         <button class="ar-refit" type="button">Auto-fit: On</button>
         <button class="ar-follow" type="button">Follow: On</button>
       </div>
@@ -185,6 +198,8 @@ export function createARMode({
   const pctEl = ui.querySelector(".ar-pct");
   const refitBtn = ui.querySelector(".ar-refit");
   const followBtn = ui.querySelector(".ar-follow");
+  const resetBtn = ui.querySelector(".ar-reset");
+  const shotBtn = ui.querySelector(".ar-shot");
 
   scaleEl.addEventListener("input", () =>
     setScale(Number(scaleEl.value) / 100),
@@ -196,7 +211,27 @@ export function createARMode({
     if (autoFitOn) autoFit();
   });
   followBtn.addEventListener("click", () => setFollow(!followCamera));
+  resetBtn.addEventListener("click", resetPlacement);
+  shotBtn.addEventListener("click", capture);
   ui.querySelector(".ar-exit").addEventListener("click", close);
+
+  function resetPlacement() {
+    if (!anchor || !viewerPose) return;
+    hasSmooth = false;
+    setFollow(true);
+  }
+
+  function capture() {
+    try {
+      const url = renderer.domElement.toDataURL("image/png");
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "ferroform-ar.png";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch {}
+  }
 
   function beginDrag(clientX, clientY) {
     if (!session || !anchor) return;
@@ -292,6 +327,32 @@ export function createARMode({
     try {
       renderer.xr.setFramebufferScaleFactor?.(1);
     } catch {}
+    if (xrLight) {
+      try {
+        xrLight.dispose?.();
+      } catch {}
+      if (xrLight.parent) xrLight.parent.remove(xrLight);
+      xrLight = null;
+    }
+    if (arKey) {
+      scene.remove(arKey);
+      scene.remove(arKey.target);
+      arKey = null;
+    }
+    if (shadowFloor) {
+      scene.remove(shadowFloor);
+      shadowFloor.geometry.dispose();
+      shadowFloor.material.dispose();
+      shadowFloor = null;
+    }
+    if (savedEnv !== null) {
+      scene.environment = savedEnv;
+      savedEnv = null;
+    }
+    if (key && savedKeyI !== null) {
+      key.intensity = savedKeyI;
+      savedKeyI = null;
+    }
     resetAnchor();
     if (scene.background === null) scene.background = savedBg;
     if (typeof setBackdrop === "function") setBackdrop(true);
@@ -302,6 +363,9 @@ export function createARMode({
     }
     activeInput = null;
     activePointerId = null;
+    activeInputs.clear();
+    pinching = false;
+    pinchStartDist = 0;
     dragStarted = false;
     viewerPose = null;
     refSpace = null;
@@ -316,11 +380,26 @@ export function createARMode({
   }
 
   function onSelectStart(e) {
-    activeInput = e.inputSource;
-    setFollow(false); // user takes control; don't snap back on release
+    activeInputs.set(e.inputSource, null);
+    if (activeInputs.size === 1) {
+      activeInput = e.inputSource;
+      setFollow(false); // user takes control; don't snap back on release
+    } else {
+      // two-finger gesture: take over (pinch scaling), pause placement
+      activeInput = null;
+      pinching = true;
+      pinchStartDist = 0;
+      pinchStartScale = s;
+    }
   }
   function onSelectEnd(e) {
+    activeInputs.delete(e.inputSource);
+    if (activeInputs.size < 2) pinching = false;
     if (activeInput === e.inputSource) activeInput = null;
+    if (activeInputs.size === 1) {
+      // remaining finger becomes the drag anchor
+      activeInput = activeInputs.keys().next().value;
+    }
   }
 
   function onPointerDown(e) {
@@ -400,7 +479,7 @@ export function createARMode({
     try {
       renderer.xr.enabled = true;
       session = await navigator.xr.requestSession("immersive-ar", {
-        optionalFeatures: ["dom-overlay", "hit-test"],
+        optionalFeatures: ["dom-overlay", "hit-test", "light-estimation"],
         domOverlay: { root: ui },
       });
       try {
@@ -427,6 +506,45 @@ export function createARMode({
           );
         }
       } catch {}
+
+      // real-world lighting: estimated directional light + reflection cube map.
+      // Gracefully falls back to the static environment if unsupported.
+      try {
+        savedEnv = scene.environment;
+        savedKeyI = key ? key.intensity : null;
+        xrLight = new XREstimatedLight(renderer, true);
+        xrLight.addEventListener("estimationstart", () => {
+          if (xrLight && xrLight.environment) scene.environment = xrLight.environment;
+        });
+        xrLight.addEventListener("estimationend", () => {
+          scene.environment = savedEnv;
+        });
+        scene.add(xrLight);
+        if (key) key.intensity = 0; // let the estimate drive shading
+      } catch {}
+
+      // a real cast shadow in the estimated light direction (intensity 0 =
+      // no extra shading; only the ShadowMaterial floor catches the shadow)
+      arKey = new THREE.DirectionalLight(0xffffff, 0);
+      arKey.castShadow = true;
+      arKey.shadow.mapSize.set(1024, 1024);
+      arKey.shadow.camera.near = 0.1;
+      arKey.shadow.camera.far = 12;
+      arKey.shadow.camera.left = -3;
+      arKey.shadow.camera.right = 3;
+      arKey.shadow.camera.top = 3;
+      arKey.shadow.camera.bottom = -3;
+      arKey.shadow.bias = -0.0004;
+      scene.add(arKey);
+      scene.add(arKey.target);
+
+      shadowFloor = new THREE.Mesh(
+        new THREE.PlaneGeometry(20, 20),
+        new THREE.ShadowMaterial({ opacity: 0.45 }),
+      );
+      shadowFloor.rotation.x = -Math.PI / 2;
+      shadowFloor.receiveShadow = true;
+      scene.add(shadowFloor);
 
       // render the XR view below native resolution for a smoother feed
       try {
@@ -463,6 +581,20 @@ export function createARMode({
     cleanup();
   }
 
+  // keep the cast-shadow light + receiver plane aligned to the placed door
+  function syncShadow() {
+    if (!anchor) return;
+    const ax = anchor.position.x,
+      ay = anchor.position.y,
+      az = anchor.position.z;
+    if (shadowFloor) shadowFloor.position.set(ax, ay + 0.001, az);
+    if (arKey) {
+      arKey.target.position.set(ax, ay, az);
+      arKey.target.updateMatrixWorld();
+      arKey.position.set(ax + 1.5, ay + 5, az + 2);
+    }
+  }
+
   function update(frame) {
     try {
       if (!session || !frame || !refSpace || !anchor) return;
@@ -472,6 +604,24 @@ export function createARMode({
       const now = performance.now();
       const dt = Math.min((now - lastT) / 1000, 0.05);
       lastT = now;
+
+      // two-finger pinch → scale (pauses placement + follow for this frame)
+      if (activeInputs.size >= 2) {
+        const it = activeInputs.keys();
+        const a = it.next().value,
+          b = it.next().value;
+        const pa = inputTarget(a, frame, _t1);
+        const pb = inputTarget(b, frame, _t2);
+        if (pa && pb) {
+          const dist = pa.distanceTo(pb);
+          if (pinchStartDist < 1e-4) pinchStartDist = dist;
+          else if (pinchStartDist > 1e-4)
+            setScale((pinchStartScale * dist) / pinchStartDist);
+        }
+        syncShadow();
+        reticle.visible = false;
+        return;
+      }
 
       if (activeInput) {
         let t = null;
@@ -520,7 +670,8 @@ export function createARMode({
         }
       }
 
-      reticle.visible = true;
+      syncShadow();
+      reticle.visible = followCamera && !activeInput && !dragStarted;
       reticle.position.set(
         anchor.position.x,
         anchor.position.y + 0.002,

@@ -5,13 +5,14 @@ import { PRODUCTS } from './products.js'
 import { createARMode } from './ar.js'
 
 const stage = document.getElementById('stage')
-const { renderer, scene, camera, setBackdrop } = createScene(stage)
+const { renderer, scene, camera, setBackdrop, key } = createScene(stage)
 
 let xrActive = false
 const ar = createARMode({
   renderer,
   scene,
   camera,
+  key,
   getCurrent: () => current,
   setActive: (v) => { xrActive = v },
   setBackdrop,
@@ -19,10 +20,15 @@ const ar = createARMode({
 renderer.xr.enabled = true
 document.getElementById('ar-open').addEventListener('click', () => ar.open())
 
-const pool = PRODUCTS.map((p) => p.build())
-let current = pool[0]
+// lazy product pool — only build each product the first time it's selected
+const pool = PRODUCTS.map(() => null)
+let current = (pool[0] = PRODUCTS[0].build())
 scene.add(current)
 let selectedIndex = 0
+function getProduct(i) {
+  if (!pool[i]) pool[i] = PRODUCTS[i].build()
+  return pool[i]
+}
 
 const anims = []
 const parallax = { x: 0, y: 0 }
@@ -66,7 +72,7 @@ const easeInCubic = (t) => t * t * t
 function selectProduct(i) {
   if (i === selectedIndex) return
   const dir = dirFor()
-  const next = pool[i]
+  const next = getProduct(i)
   next.visible = true
   scene.add(next)
   next.position.copy(dir).multiplyScalar(2.4)
