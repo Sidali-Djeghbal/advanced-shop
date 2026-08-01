@@ -253,13 +253,6 @@ function loadDoorFace(url) {
       }
       fctx.putImageData(fimg, 0, 0);
 
-      // the printed hinges are gold, but the real door's hinges are white —
-      // paint over the prints so the 3D white barrels can take their place
-      fctx.fillStyle = "#f4f1ea";
-      for (const cy of [0.071, 0.375, 0.814]) {
-        fctx.fillRect(w - 40, Math.round(cy * h) - 42, 40, 84);
-      }
-
       resolve({ faceTex: makeCanvasTexture(face), aspect: w / h });
     };
     img.onerror = () => reject(new Error(`Failed to load ${url}`));
@@ -269,15 +262,15 @@ function loadDoorFace(url) {
 
 function makeContactShadow() {
   const c = document.createElement("canvas");
-  c.width = 256;
-  c.height = 256;
+  c.width = 128;
+  c.height = 128;
   const ctx = c.getContext("2d");
-  const grad = ctx.createRadialGradient(128, 128, 12, 128, 128, 122);
+  const grad = ctx.createRadialGradient(64, 64, 6, 64, 64, 61);
   grad.addColorStop(0, "rgba(0,0,0,0.5)");
   grad.addColorStop(0.55, "rgba(0,0,0,0.2)");
   grad.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 256, 256);
+  ctx.fillRect(0, 0, 128, 128);
   const tex = new THREE.CanvasTexture(c);
   const m = new THREE.Mesh(
     new THREE.PlaneGeometry(1.6, 0.9),
@@ -297,10 +290,11 @@ function buildPlasmaDoor() {
   const H = 1.98;
   const coreDepth = 0.04;
 
+  // tones sampled from img/door-real/* (gold avg ~#a0874a; warm-ivory paint)
   const edgeMat = new THREE.MeshStandardMaterial({
-    color: 0xf0ede6,
+    color: 0xece8dc,
     metalness: 0.05,
-    roughness: 0.55,
+    roughness: 0.6,
   });
   const coreMat = new THREE.MeshStandardMaterial({
     color: 0x241c12,
@@ -308,30 +302,33 @@ function buildPlasmaDoor() {
     roughness: 0.8,
   });
   const faceMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    roughness: 0.55,
+    color: 0xf3efe5,
+    roughness: 0.6,
     metalness: 0.06,
     alphaTest: 0.5,
   });
   const goldMat = new THREE.MeshStandardMaterial({
-    color: 0xb08d4e,
+    color: 0xa0874a,
     metalness: 1,
-    roughness: 0.25,
+    roughness: 0.32,
+    envMapIntensity: 1.3,
   });
   const frameWhiteMat = new THREE.MeshStandardMaterial({
-    color: 0xf1eee7,
-    metalness: 0.08,
-    roughness: 0.5,
+    color: 0xece8dc,
+    metalness: 0.05,
+    roughness: 0.6,
   });
   const chromeMat = new THREE.MeshStandardMaterial({
-    color: 0xd0d0cc,
+    color: 0xcfcfca,
     metalness: 1,
-    roughness: 0.38,
+    roughness: 0.45,
+    envMapIntensity: 1.1,
   });
   const brassMat = new THREE.MeshStandardMaterial({
-    color: 0xb08d4e,
+    color: 0xa0874a,
     metalness: 1,
-    roughness: 0.3,
+    roughness: 0.32,
+    envMapIntensity: 1.3,
   });
 
   // soft contact shadow — grounds the door so it stops looking pasted on
@@ -391,11 +388,11 @@ function buildPlasmaDoor() {
       topJamb.receiveShadow = true;
       g.add(topJamb);
 
-      // white barrel hinges on the right edge (the real hinges are white)
+      // brass barrel hinges on the right edge
       for (const hy of [1.85, 1.25, 0.38]) {
         const hinge = new THREE.Mesh(
           new THREE.CylinderGeometry(0.013, 0.013, 0.13, 14),
-          frameWhiteMat,
+          brassMat,
         );
         hinge.position.set(W / 2 + gap + 0.006, hy, 0);
         hinge.castShadow = true;

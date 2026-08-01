@@ -61,15 +61,21 @@ export function createARMode({
     return out.set(origin.x + dir.x * t, y, origin.z + dir.z * t);
   }
 
-  // Accept only real floor hits: horizontal, up-facing, clearly below the viewer.
+  // Accept only real floor hits: horizontal, up-facing, clearly below the
+  // viewer, and within reach so the door stays appropriately sized.
   function floorHitPosition(pose, out) {
     const q = pose.transform.orientation;
     _q.set(q.x, q.y, q.z, q.w);
     _v.set(0, 1, 0).applyQuaternion(_q);
     if (_v.y < 0.6) return null; // walls / ceilings
     const p = pose.transform.position;
-    const vy = viewerPose ? viewerPose.transform.position.y : p.y + 1.5;
-    if (vy - p.y < 0.5) return null; // table tops and higher surfaces
+    const v = viewerPose ? viewerPose.transform.position : null;
+    if (v) {
+      if (v.y - p.y < 0.5) return null; // tables and higher surfaces
+      const dx = p.x - v.x,
+        dz = p.z - v.z;
+      if (dx * dx + dz * dz > 16) return null; // beyond ~4 m
+    }
     return out.set(p.x, p.y, p.z);
   }
 
@@ -422,9 +428,9 @@ export function createARMode({
         }
       } catch {}
 
-      // render the XR view a bit below native resolution for a smoother feed
+      // render the XR view below native resolution for a smoother feed
       try {
-        renderer.xr.setFramebufferScaleFactor?.(0.85);
+        renderer.xr.setFramebufferScaleFactor?.(0.8);
       } catch {}
 
       session.addEventListener("selectstart", onSelectStart);
