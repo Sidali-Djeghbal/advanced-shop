@@ -180,7 +180,17 @@ function leafShape() {
   return s;
 }
 
-function loadCroppedTexture(url) {
+function makeCanvasTexture(canvas) {
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  return tex;
+}
+
+function loadDoorTextures(url) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
@@ -215,62 +225,186 @@ function loadCroppedTexture(url) {
 
       const w = maxX - minX + 1;
       const h = maxY - minY + 1;
+
+      // base paint texture (photo composited on the door's cream paint)
       const out = document.createElement("canvas");
       out.width = w;
       out.height = h;
       const octx = out.getContext("2d");
-      octx.fillStyle = "#ffffff";
+      octx.fillStyle = "#f4f1ea";
       octx.fillRect(0, 0, w, h);
       octx.drawImage(img, minX, minY, w, h, 0, 0, w, h);
 
-      const tex = new THREE.CanvasTexture(out);
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.anisotropy = 8;
-      tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
-      tex.minFilter = THREE.LinearFilter;
-      tex.magFilter = THREE.LinearFilter;
-      resolve({ tex, aspect: w / h });
+      // gold ornament mask: keep only gold pixels, everything else transparent
+      const crop = sctx.getImageData(minX, minY, w, h);
+      const sp = crop.data;
+      const gold = document.createElement("canvas");
+      gold.width = w;
+      gold.height = h;
+      const gctx = gold.getContext("2d");
+      const gimg = gctx.createImageData(w, h);
+      const dp = gimg.data;
+      for (let i = 0; i < sp.length; i += 4) {
+        const r = sp[i],
+          g = sp[i + 1],
+          b = sp[i + 2],
+          a = sp[i + 3];
+        const mx = Math.max(r, g, b),
+          mn = Math.min(r, g, b);
+        const sat = mx > 0 ? (mx - mn) / mx : 0;
+        if (a > 128 && sat > 0.28 && r > 110 && r > b + 40 && g > b + 20) {
+          dp[i] = r;
+          dp[i + 1] = g;
+          dp[i + 2] = b;
+          dp[i + 3] = 255;
+        }
+      }
+      gctx.putImageData(gimg, 0, 0);
+
+      resolve({
+        baseTex: makeCanvasTexture(out),
+        goldTex: makeCanvasTexture(gold),
+        aspect: w / h,
+      });
     };
     img.onerror = () => reject(new Error(`Failed to load ${url}`));
     img.src = url;
   });
 }
 
+function makeContactShadow() {
+  const c = document.createElement("canvas");
+  c.width = 256;
+  c.height = 256;
+  const ctx = c.getContext("2d");
+  const grad = ctx.createRadialGradient(128, 128, 12, 128, 128, 122);
+  grad.addColorStop(0, "rgba(0,0,0,0.5)");
+  grad.addColorStop(0.55, "rgba(0,0,0,0.2)");
+  grad.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 256, 256);
+  const tex = new THREE.CanvasTexture(c);
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.6, 0.9),
+    new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      depthWrite: false,
+    }),
+  );
+  m.rotation.x = -Math.PI / 2;
+  m.position.y = 0.005;
+  return m;
+}
+
 function buildPlasmaDoor() {
   const g = group();
-  const imageHeight = 1.98;
-  const depth = 0.06;
+  const H = 1.98;
+  const depth = 0.05;
 
-  const sideMat = new THREE.MeshStandardMaterial({
-    color: 0xeeeeea,
-    metalness: 0.1,
-    roughness: 0.85,
+  const edgeMat = new THREE.MeshStandardMaterial({
+    color: 0xf2efe8,
+    metalness: 0,
+    roughness: 0.6,
   });
-  const photoMat = new THREE.MeshStandardMaterial({
+  const paintMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
-    roughness: 0.85,
-    metalness: 0.05,
+    roughness: 0.62,
+    metalness: 0,
+  });
+  const goldMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    metalness: 1,
+    roughness: 0.3,
+    alphaTest: 0.5,
+  });
+  const chromeMat = new THREE.MeshStandardMaterial({
+    color: 0xd9d9d6,
+    metalness: 1,
+    roughness: 0.22,
+  });
+  const brassMat = new THREE.MeshStandardMaterial({
+    color: 0xc9a23f,
+    metalness: 1,
+    roughness: 0.3,
   });
 
-  loadCroppedTexture(doorImage)
-    .then(({ tex, aspect }) => {
-      const imageWidth = imageHeight * aspect;
-      photoMat.map = tex;
-      photoMat.needsUpdate = true;
+  // soft contact shadow — grounds the door so it stops looking pasted on
+  g.add(makeContactShadow());
 
-      const slab = new THREE.Mesh(
-        new THREE.BoxGeometry(imageWidth, imageHeight, depth),
-        [sideMat, sideMat, sideMat, sideMat, photoMat, sideMat],
+  loadDoorTextures(doorImage)
+    .then(({ baseTex, goldTex, aspect }) => {
+      const W = H * aspect;
+      paintMat.map = baseTex;
+      paintMat.needsUpdate = true;
+      goldMat.map = goldTex;
+      goldMat.needsUpdate = true;
+
+      // solid door leaf, photo on both faces
+      const leaf = new THREE.Mesh(
+        new THREE.BoxGeometry(W, H, depth),
+        [edgeMat, edgeMat, edgeMat, edgeMat, paintMat, paintMat],
       );
-      slab.position.set(0, imageHeight / 2, 0);
-      slab.castShadow = true;
-      slab.receiveShadow = true;
-      g.add(slab);
+      leaf.position.set(0, H / 2, 0);
+      leaf.castShadow = true;
+      leaf.receiveShadow = true;
+      g.add(leaf);
+
+      // raised metallic gold ornament, 2 mm proud of the face
+      const ornament = new THREE.Mesh(new THREE.PlaneGeometry(W, H), goldMat);
+      ornament.position.set(0, H / 2, depth / 2 + 0.002);
+      g.add(ornament);
+
+      // chrome pull handle standing off the face (matches the photo)
+      const handle = new THREE.Group();
+      const grip = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.013, 0.013, 0.66, 20),
+        chromeMat,
+      );
+      grip.position.set(0, 0, 0.055);
+      handle.add(grip);
+      for (const my of [-0.27, 0.27]) {
+        const mount = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.007, 0.007, 0.055, 12),
+          chromeMat,
+        );
+        mount.rotation.x = Math.PI / 2;
+        mount.position.set(0, my, 0.0275);
+        handle.add(mount);
+      }
+      handle.position.set(-0.305, 0.99, depth / 2);
+      handle.traverse((o) => {
+        o.castShadow = true;
+      });
+      g.add(handle);
+
+      // brass hinges on the right edge
+      for (const hy of [1.85, 1.25, 0.38]) {
+        const hinge = new THREE.Mesh(
+          new THREE.BoxGeometry(0.03, 0.12, 0.026),
+          brassMat,
+        );
+        hinge.position.set(W / 2 + 0.008, hy, 0);
+        hinge.castShadow = true;
+        g.add(hinge);
+      }
+
+      // brass lock knobs
+      for (const ky of [1.41, 0.6]) {
+        const knob = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.016, 0.016, 0.024, 16),
+          brassMat,
+        );
+        knob.rotation.x = Math.PI / 2;
+        knob.position.set(-0.343, ky, depth / 2 + 0.008);
+        knob.castShadow = true;
+        g.add(knob);
+      }
     })
     .catch(() => {
       const panel = new THREE.Mesh(
         new THREE.PlaneGeometry(0.92, 1.98),
-        photoMat,
+        paintMat,
       );
       panel.position.set(0, 0.99, 0);
       g.add(panel);
