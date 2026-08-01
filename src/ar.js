@@ -6,11 +6,11 @@ export function createARMode({ renderer, scene, getCurrent, setActive, setBackdr
   let hitSource = null;
   let transientSource = null;
   let anchor = null;
-  let placed = false;
   let savedBg = null;
   let baseHeight = 2.1;
   let s = 1;
   let autoFitOn = true;
+  let followCamera = true;
 
   const reticle = new THREE.Mesh(
     new THREE.RingGeometry(0.13, 0.16, 40),
@@ -54,21 +54,35 @@ export function createARMode({ renderer, scene, getCurrent, setActive, setBackdr
   ui.innerHTML = `
     <div class="ar-top">
       <button class="ar-exit" type="button">Exit AR</button>
-      <span class="ar-tip">Tap floor to place &middot; drag to move</span>
+      <span class="ar-tip">Follows your camera &middot; drag to move</span>
     </div>
     <div class="ar-bottom">
-      <label class="ar-size">Size<input class="ar-scale" type="range" min="40" max="250" value="100"></label>
-      <button class="ar-refit" type="button">Auto-fit: On</button>
+      <div class="ar-slider">
+        <label>Size <b class="ar-pct">100%</b></label>
+        <input class="ar-scale" type="range" min="40" max="250" value="100">
+      </div>
+      <div class="ar-toggles">
+        <button class="ar-refit" type="button">Auto-fit: On</button>
+        <button class="ar-follow" type="button">Follow: On</button>
+      </div>
     </div>
   `;
   const scaleEl = ui.querySelector(".ar-scale");
+  const pctEl = ui.querySelector(".ar-pct");
   const refitBtn = ui.querySelector(".ar-refit");
+  const followBtn = ui.querySelector(".ar-follow");
 
   scaleEl.addEventListener("input", () => setScale(Number(scaleEl.value) / 100));
   refitBtn.addEventListener("click", () => {
     autoFitOn = !autoFitOn;
     refitBtn.textContent = autoFitOn ? "Auto-fit: On" : "Auto-fit: Off";
+    refitBtn.classList.toggle("off", !autoFitOn);
     if (autoFitOn) autoFit();
+  });
+  followBtn.addEventListener("click", () => {
+    followCamera = !followCamera;
+    followBtn.textContent = followCamera ? "Follow: On" : "Follow: Off";
+    followBtn.classList.toggle("off", !followCamera);
   });
   ui.querySelector(".ar-exit").addEventListener("click", close);
 
@@ -100,9 +114,9 @@ export function createARMode({ renderer, scene, getCurrent, setActive, setBackdr
     if (scene.background === null) scene.background = savedBg;
     if (typeof setBackdrop === "function") setBackdrop(true);
     if (typeof setActive === "function") setActive(false);
-    placed = false;
     s = 1;
     autoFitOn = true;
+    followCamera = true;
     hitSource = null;
     transientSource = null;
     refSpace = null;
@@ -215,6 +229,7 @@ export function createARMode({ renderer, scene, getCurrent, setActive, setBackdr
   function setScale(v) {
     s = Math.min(3, Math.max(0.35, v));
     scaleEl.value = String(Math.round(s * 100));
+    pctEl.textContent = Math.round(s * 100) + "%";
     if (anchor) anchor.scale.setScalar(s);
   }
 
@@ -247,14 +262,12 @@ export function createARMode({ renderer, scene, getCurrent, setActive, setBackdr
           const ray = r.inputSource ? rayToFloor(r.inputSource, frame) : null;
           if (ray) {
             placeAt(ray);
-            placed = true;
             touched = true;
             if (autoFitOn) autoFit();
           } else if (r.results.length) {
             const pose = r.results[0].getPose(refSpace);
             if (pose && isFloor(pose)) {
               applyPose(pose);
-              placed = true;
               touched = true;
               if (autoFitOn) autoFit();
             }
@@ -276,7 +289,7 @@ export function createARMode({ renderer, scene, getCurrent, setActive, setBackdr
           reticlePose.position.y + 0.002,
           reticlePose.position.z,
         );
-        if (!placed && !touched) {
+        if (followCamera && !touched) {
           const p = reticlePose.transform.position;
           placeAt(new THREE.Vector3(p.x, p.y, p.z));
           if (autoFitOn) autoFit();
