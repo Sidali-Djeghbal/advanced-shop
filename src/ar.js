@@ -24,12 +24,37 @@ export function createARMode({ renderer, scene, getCurrent, setActive, setBackdr
   reticle.rotation.x = -Math.PI / 2;
   reticle.visible = false;
 
+  const _q = new THREE.Quaternion();
+  const _v = new THREE.Vector3();
+
+  function rayToFloor(input, frame) {
+    if (!input || !input.targetRaySpace) return null;
+    const pose = frame.getPose(input.targetRaySpace, refSpace);
+    if (!pose) return null;
+    const o = pose.transform.position;
+    const q = pose.transform.orientation;
+    _q.set(q.x, q.y, q.z, q.w);
+    _v.set(0, 0, -1).applyQuaternion(_q);
+    const y = anchor.position.y;
+    if (Math.abs(_v.y) < 1e-5) return null;
+    const t = (y - o.y) / _v.y;
+    if (t < 0) return null;
+    return new THREE.Vector3(o.x + _v.x * t, y, o.z + _v.z * t);
+  }
+
+  function placeAt(pos) {
+    anchor.position.copy(pos);
+    anchor.rotation.set(0, 0, 0);
+    anchor.scale.setScalar(s);
+    faceViewer();
+  }
+
   const ui = document.createElement("div");
   ui.className = "ar-ui";
   ui.innerHTML = `
     <div class="ar-top">
       <button class="ar-exit" type="button">Exit AR</button>
-      <span class="ar-tip">Aim at the floor &middot; tap to place &middot; drag to move</span>
+      <span class="ar-tip">Tap floor to place &middot; drag to move</span>
     </div>
     <div class="ar-bottom">
       <label class="ar-size">Size<input class="ar-scale" type="range" min="40" max="250" value="100"></label>
@@ -207,10 +232,7 @@ export function createARMode({ renderer, scene, getCurrent, setActive, setBackdr
 
   function applyPose(pose) {
     const p = pose.transform.position;
-    anchor.position.set(p.x, p.y, p.z);
-    anchor.rotation.set(0, 0, 0);
-    anchor.scale.setScalar(s);
-    faceViewer();
+    placeAt(new THREE.Vector3(p.x, p.y, p.z));
   }
 
   function update(frame) {
@@ -221,9 +243,15 @@ export function createARMode({ renderer, scene, getCurrent, setActive, setBackdr
       if (transientSource) {
         const trs = frame.getHitTestResultsForTransientInput(transientSource);
         if (trs.length) {
-          const results = trs[0].results;
-          if (results.length) {
-            const pose = results[0].getPose(refSpace);
+          const r = trs[0];
+          const ray = r.inputSource ? rayToFloor(r.inputSource, frame) : null;
+          if (ray) {
+            placeAt(ray);
+            placed = true;
+            touched = true;
+            if (autoFitOn) autoFit();
+          } else if (r.results.length) {
+            const pose = r.results[0].getPose(refSpace);
             if (pose && isFloor(pose)) {
               applyPose(pose);
               placed = true;
@@ -250,9 +278,7 @@ export function createARMode({ renderer, scene, getCurrent, setActive, setBackdr
         );
         if (!placed && !touched) {
           const p = reticlePose.transform.position;
-          anchor.position.set(p.x, p.y, p.z);
-          anchor.rotation.set(0, 0, 0);
-          anchor.scale.setScalar(s);
+          placeAt(new THREE.Vector3(p.x, p.y, p.z));
           if (autoFitOn) autoFit();
         }
       } else {
